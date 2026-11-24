@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local database and uploads
+*.db
+*.sqlite
+*.sqlite3
+clearance_uploads/
+uploads/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Build and OS files
+dist/
+build/
+.DS_Store
+Thumbs.db
