@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: faculty-clearance-api
+    runtime: python
+    plan: 0.5c-512mb
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    disk:
+      name: clearance-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: CLEARANCE_DATABASE_PATH
+        value: /var/data/clearance.db
+      - key: CLEARANCE_UPLOAD_DIR
+        value: /var/data/clearance_uploads
+      - key: CLEARANCE_DEMO_MODE
+        value: "false"
+      - key: CLEARANCE_CORS_ORIGINS
+        sync: false
+      - key: CLEARANCE_BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
