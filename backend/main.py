@@ -188,17 +188,26 @@ def _initialize_database() -> None:
                 "INSERT INTO requirements (id,title,description,category,department,assigned_role,position) VALUES (?,?,?,?,?,?,?)",
                 [(str(uuid4()), *row, index) for index, row in enumerate(samples)],
             )
-        if not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-            bootstrap_email = os.getenv("CLEARANCE_BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
-            bootstrap_password = os.getenv("CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD", "")
-            if bool(bootstrap_email) != bool(bootstrap_password) or (bootstrap_password and len(bootstrap_password) < 10):
-                raise ValueError("Set both bootstrap admin variables and use a password of at least 10 characters.")
-            if bootstrap_email and bootstrap_password:
-                db.execute(
-                    """INSERT INTO users (id,role,full_name,email,department,password_hash,created_at)
-                    VALUES (?,'super_admin','System Administrator',?,'',?,?)""",
-                    (str(uuid4()), bootstrap_email, _password_hash(bootstrap_password), now()),
-                )
+        bootstrap_email = os.getenv("CLEARANCE_BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
+        bootstrap_password = os.getenv("CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD", "")
+        if bool(bootstrap_email) != bool(bootstrap_password) or (bootstrap_password and len(bootstrap_password) < 10):
+            raise ValueError("Set both bootstrap admin variables and use a password of at least 10 characters.")
+        if bootstrap_email and bootstrap_password:
+            if not db.execute("SELECT 1 FROM users WHERE role='super_admin' LIMIT 1").fetchone():
+                existing_user = db.execute(
+                    "SELECT id FROM users WHERE lower(email)=?", (bootstrap_email,)
+                ).fetchone()
+                if existing_user:
+                    db.execute(
+                        "UPDATE users SET role='super_admin',password_hash=? WHERE id=?",
+                        (_password_hash(bootstrap_password), existing_user["id"]),
+                    )
+                else:
+                    db.execute(
+                        """INSERT INTO users (id,role,full_name,email,department,password_hash,created_at)
+                        VALUES (?,'super_admin','System Administrator',?,'',?,?)""",
+                        (str(uuid4()), bootstrap_email, _password_hash(bootstrap_password), now()),
+                    )
         if DEMO_MODE and not db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             accounts = [
                 ("Amina Yusuf", "student", "CSC/22/0418", "amina.student@northstar.edu", "Computer Science"),

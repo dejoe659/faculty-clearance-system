@@ -59,6 +59,91 @@ class DatabaseConnectionTests(unittest.TestCase):
                     ).fetchone()
             self.assertEqual(notification["is_read"], 1)
 
+    def test_bootstrap_admin_is_created_when_student_already_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "clearance.db"
+            with patch.object(main, "DATABASE_URL", ""), patch.object(
+                main, "DATABASE_PATH", database_path
+            ), patch.dict(
+                main.os.environ,
+                {"CLEARANCE_BOOTSTRAP_ADMIN_EMAIL": "", "CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD": ""},
+            ):
+                main._initialize_database()
+                with main.connect() as db:
+                    db.execute(
+                        """INSERT INTO users (id,role,full_name,email,password_hash,created_at)
+                        VALUES (?,?,?,?,?,?)""",
+                        (
+                            "student-1",
+                            "student",
+                            "Student One",
+                            "student@example.edu",
+                            main._password_hash("StudentPass123!"),
+                            "2025-01-01",
+                        ),
+                    )
+
+                with patch.dict(
+                    main.os.environ,
+                    {
+                        "CLEARANCE_BOOTSTRAP_ADMIN_EMAIL": "admin@example.edu",
+                        "CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD": "AdminPass123!",
+                    },
+                ):
+                    main._initialize_database()
+                    main._initialize_database()
+
+                with main.connect() as db:
+                    admin = db.execute(
+                        "SELECT role,password_hash FROM users WHERE lower(email)=?",
+                        ("admin@example.edu",),
+                    ).fetchone()
+                    user_count = db.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+
+            self.assertEqual(user_count, 2)
+            self.assertEqual(admin["role"], "super_admin")
+            self.assertTrue(main._password_matches("AdminPass123!", admin["password_hash"]))
+
+    def test_bootstrap_promotes_matching_existing_user(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "clearance.db"
+            with patch.object(main, "DATABASE_URL", ""), patch.object(
+                main, "DATABASE_PATH", database_path
+            ), patch.dict(
+                main.os.environ,
+                {"CLEARANCE_BOOTSTRAP_ADMIN_EMAIL": "", "CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD": ""},
+            ):
+                main._initialize_database()
+                with main.connect() as db:
+                    db.execute(
+                        """INSERT INTO users (id,role,full_name,email,password_hash,created_at)
+                        VALUES (?,?,?,?,?,?)""",
+                        (
+                            "student-1",
+                            "student",
+                            "Student One",
+                            "admin@example.edu",
+                            main._password_hash("StudentPass123!"),
+                            "2025-01-01",
+                        ),
+                    )
+
+                with patch.dict(
+                    main.os.environ,
+                    {
+                        "CLEARANCE_BOOTSTRAP_ADMIN_EMAIL": "admin@example.edu",
+                        "CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD": "AdminPass123!",
+                    },
+                ):
+                    main._initialize_database()
+
+                with main.connect() as db:
+                    users = db.execute("SELECT role,password_hash FROM users").fetchall()
+
+            self.assertEqual(len(users), 1)
+            self.assertEqual(users[0]["role"], "super_admin")
+            self.assertTrue(main._password_matches("AdminPass123!", users[0]["password_hash"]))
+
 
 if __name__ == "__main__":
     unittest.main()

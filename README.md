@@ -39,7 +39,7 @@ Demo data is seeded only when `CLEARANCE_DEMO_MODE=true` and the database has no
 | Faculty administrator | `grace.admin@northstar.edu` |
 | Super administrator | `admin@northstar.edu` |
 
-Without demo mode, students can register from the sign-in page. For a fresh production database, set `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL` and `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD` before starting the API to create the initial super administrator. The bootstrap password must be at least 10 characters. Remove these bootstrap variables after the admin account is created.
+Without demo mode, students can register from the sign-in page. Set `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL` and `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD` on the API service to create the initial super administrator, even if student accounts already exist. If the configured email belongs to an existing account, that account is promoted and its password is set to the bootstrap password. Bootstrap does not change an existing super administrator. The password must be at least 10 characters. Remove these bootstrap variables after confirming admin access.
 
 ## Configuration and storage
 
@@ -48,7 +48,7 @@ Without demo mode, students can register from the sign-in page. For a fresh prod
 - `CLEARANCE_UPLOAD_DIR`: private document storage directory (defaults to `backend/clearance_uploads`).
 - `CLEARANCE_CORS_ORIGINS`: comma-separated allowed frontend origins (defaults to local `localhost` and `127.0.0.1`).
 - `CLEARANCE_DEMO_MODE`: seed demo accounts and one sample application on a new database; defaults to `false`.
-- `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL` and `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD`: initial super-admin credentials for an empty database.
+- `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL` and `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD`: initial super-admin credentials; creates or promotes the configured account only when no super administrator exists.
 - `NEXT_PUBLIC_API_URL`: frontend API origin (defaults to `http://127.0.0.1:8000`).
 
 Uploaded documents are limited to PDF, PNG, and JPEG files (10 MB). The API validates file signatures, stores files under random names, and requires an authenticated, appropriately scoped user to retrieve them. Passwords are stored as scrypt hashes; bearer sessions expire after 12 hours.
@@ -70,6 +70,6 @@ The API uses Railway PostgreSQL whenever `DATABASE_URL` is configured. `backend/
 6. In Vercel, import the same GitHub repository and set its **Root Directory** to `frontend`. Set `NEXT_PUBLIC_API_URL` to the Railway API's public URL, then deploy.
 7. Update `CLEARANCE_CORS_ORIGINS` to the exact Vercel production origin if it differs from the value configured earlier. Sign in with the bootstrap admin account, create staff, then remove the bootstrap email and password variables.
 
-The API creates the PostgreSQL schema on startup. A new Railway PostgreSQL database starts empty; local SQLite accounts, documents, and student records are not automatically copied. The bootstrap admin is created once on an empty database. Never enable demo mode in production or put database URLs or admin credentials into GitHub.
+The API creates the PostgreSQL schema on startup. A new Railway PostgreSQL database starts empty; local SQLite accounts, documents, and student records are not automatically copied. The bootstrap admin is created once when no super administrator exists. Never enable demo mode in production or put database URLs or admin credentials into GitHub.
 
 This is not yet a fully hardened university production system. Before using real records, configure backups and retention, review institutional privacy/security requirements, and consider moving uploads to private object storage. Email/SMS delivery, QR verification, multi-faculty tenant isolation, password reset/MFA, and configurable session deadlines are not implemented.
