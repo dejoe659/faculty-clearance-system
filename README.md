@@ -25,7 +25,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-Open http://localhost:3000. The backend API documentation is at http://localhost:8000/docs.
+Open http://localhost:3000. The backend API documentation is at http://localhost:8000/docs. The local backend uses SQLite by default. To run it against PostgreSQL, set `DATABASE_URL` to a PostgreSQL connection URL before starting the API.
 
 ### Demo accounts
 
@@ -43,7 +43,8 @@ Without demo mode, students can register from the sign-in page. For a fresh prod
 
 ## Configuration and storage
 
-- `CLEARANCE_DATABASE_PATH`: SQLite file path (defaults to `backend/clearance.db`).
+- `DATABASE_URL`: PostgreSQL connection URL. When set, the API uses PostgreSQL; otherwise, local development uses SQLite.
+- `CLEARANCE_DATABASE_PATH`: local SQLite file path (defaults to `backend/clearance.db`).
 - `CLEARANCE_UPLOAD_DIR`: private document storage directory (defaults to `backend/clearance_uploads`).
 - `CLEARANCE_CORS_ORIGINS`: comma-separated allowed frontend origins (defaults to local `localhost` and `127.0.0.1`).
 - `CLEARANCE_DEMO_MODE`: seed demo accounts and one sample application on a new database; defaults to `false`.
@@ -52,21 +53,23 @@ Without demo mode, students can register from the sign-in page. For a fresh prod
 
 Uploaded documents are limited to PDF, PNG, and JPEG files (10 MB). The API validates file signatures, stores files under random names, and requires an authenticated, appropriately scoped user to retrieve them. Passwords are stored as scrypt hashes; bearer sessions expire after 12 hours.
 
-## Scope and deployment
+## Deploy to Railway and Vercel
 
-This is a functional local-first MVP, not a fully hardened university production deployment. It uses SQLite and local file storage, a single faculty configuration, and an in-app notification feed; it does not yet provide email/SMS delivery, QR-code verification, multi-faculty tenant isolation, password reset/MFA, configurable session deadlines, or a full permissions editor. Before deployment with real student records, use private durable storage, HTTPS, backups, retention controls, institutional identity integration, and a security/privacy review. Do not enable demo mode in a production environment.
+The API uses Railway PostgreSQL whenever `DATABASE_URL` is configured. `backend/Dockerfile` packages the API and its PostgreSQL driver for Railway.
 
-### Deploy the current SQLite version
+1. In Railway, create a project and add a service from the GitHub repository `dejoe659/faculty-clearance-system`. Set the API service's **Root Directory** to `/backend`; Railway will build `backend/Dockerfile`.
+2. Add a PostgreSQL service to the project. Set the API service's `DATABASE_URL` variable to a Railway reference to the database service's `DATABASE_URL` (select the reference in Railway's variable editor; do not copy credentials into source code).
+3. Configure the API service's variables:
+   - `CLEARANCE_DEMO_MODE=false`
+   - `CLEARANCE_CORS_ORIGINS=https://<your-vercel-domain>`
+   - `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL=<your-admin-email>`
+   - `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD=<unique-password-of-at-least-10-characters>`
+   - `CLEARANCE_UPLOAD_DIR=/data/clearance_uploads`
+4. Attach a Railway volume to the API service at `/data`. This persists uploaded documents; PostgreSQL stores the application records. Keep the API as a single instance while using local-volume document storage.
+5. Set the Railway health check path to `/health`, deploy the API, and confirm its generated Railway domain returns `{"status":"healthy"}`.
+6. In Vercel, import the same GitHub repository and set its **Root Directory** to `frontend`. Set `NEXT_PUBLIC_API_URL` to the Railway API's public URL, then deploy.
+7. Update `CLEARANCE_CORS_ORIGINS` to the exact Vercel production origin if it differs from the value configured earlier. Sign in with the bootstrap admin account, create staff, then remove the bootstrap email and password variables.
 
-The included `render.yaml` configures the API on Render with a persistent disk for the SQLite database and uploaded documents. Its `0.5c-512mb` compute plan and persistent disk are paid resources; review the current price in Render before creating the Blueprint.
+The API creates the PostgreSQL schema on startup. A new Railway PostgreSQL database starts empty; local SQLite accounts, documents, and student records are not automatically copied. The bootstrap admin is created once on an empty database. Never enable demo mode in production or put database URLs or admin credentials into GitHub.
 
-1. In Render, create a Blueprint from `dejoe659/faculty-clearance-system` and approve the `faculty-clearance-api` service. During setup, enter:
-   - `CLEARANCE_CORS_ORIGINS`: your deployed Vercel origin, for example `https://faculty-clearance-system.vercel.app` (no trailing slash).
-   - `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL`: your own administrator email.
-   - `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD`: a unique password of at least 10 characters. Keep it private.
-2. Wait until the API's `/health` endpoint reports `{"status":"healthy"}`. Copy the Render service URL.
-3. In Vercel, import the same GitHub repository and set its **Root Directory** to `frontend`. Add `NEXT_PUBLIC_API_URL` with the Render API URL (for example `https://faculty-clearance-api.onrender.com`) and deploy.
-4. If Vercel assigns a different production domain, update `CLEARANCE_CORS_ORIGINS` in Render to that exact origin and redeploy the API.
-5. Sign in at the Vercel site with the bootstrap admin email and password. Create staff from **Students**. Then remove the bootstrap email/password variables from Render.
-
-The first Render deployment can use the expected `faculty-clearance-system.vercel.app` origin; if that name is unavailable, update CORS after Vercel provides the actual domain. Keep demo mode disabled. This SQLite deployment is suitable for a small pilot with a single API instance. For concurrent production traffic or multiple instances, migrate the backend to PostgreSQL and move uploads to private object storage before scaling. The current backend does not yet support PostgreSQL.
+This is not yet a fully hardened university production system. Before using real records, configure backups and retention, review institutional privacy/security requirements, and consider moving uploads to private object storage. Email/SMS delivery, QR verification, multi-faculty tenant isolation, password reset/MFA, and configurable session deadlines are not implemented.

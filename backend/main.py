@@ -13,14 +13,18 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+import psycopg
+from psycopg.rows import dict_row
 
 BASE_DIR = Path(__file__).parent
 DATABASE_PATH = Path(os.getenv("CLEARANCE_DATABASE_PATH", str(BASE_DIR / "clearance.db")))
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 UPLOAD_DIR = Path(os.getenv("CLEARANCE_UPLOAD_DIR", str(BASE_DIR / "clearance_uploads")))
 MAX_FILE_BYTES = 10 * 1024 * 1024
 ROLES = {"student", "departmental_officer", "faculty_officer", "faculty_admin", "super_admin"}
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
 DEMO_MODE = os.getenv("CLEARANCE_DEMO_MODE", "false").lower() == "true"
+INTEGRITY_ERRORS = (sqlite3.IntegrityError, psycopg.IntegrityError)
 
 app = FastAPI(title="Faculty Clearance API", description="Faculty clearance applications and review workflow.", version="1.0.0")
 origins = [
@@ -38,12 +42,51 @@ app.add_middleware(
 bearer = HTTPBearer(auto_error=False)
 
 
+class DatabaseConnection:
+    def __init__(self) -> None:
+        self.postgres = bool(DATABASE_URL)
+        if self.postgres:
+            self.connection = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        else:
+            DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self.connection = sqlite3.connect(DATABASE_PATH)
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA foreign_keys = ON")
+
+    @staticmethod
+    def _postgres_sql(statement: str) -> str:
+        return statement.replace("?", "%s")
+
+    def execute(self, statement: str, params: tuple = ()):
+        if self.postgres:
+            statement = self._postgres_sql(statement)
+        return self.connection.execute(statement, params)
+
+    def executemany(self, statement: str, params):
+        if self.postgres:
+            statement = self._postgres_sql(statement)
+        cursor = self.connection.cursor()
+        cursor.executemany(statement, params)
+        return cursor
+
+    def executescript(self, script: str) -> None:
+        for statement in script.split(";"):
+            if statement.strip():
+                self.execute(statement)
+
+    def commit(self) -> None:
+        self.connection.commit()
+
+    def rollback(self) -> None:
+        self.connection.rollback()
+
+    def close(self) -> None:
+        self.connection.close()
+
+
 @contextmanager
-def connect() -> Iterator[sqlite3.Connection]:
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(DATABASE_PATH)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
+def connect() -> Iterator[DatabaseConnection]:
+    db = DatabaseConnection()
     try:
         yield db
         db.commit()
@@ -109,7 +152,7 @@ def _initialize_database() -> None:
             );
             CREATE TABLE IF NOT EXISTS notifications (
                 id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                message TEXT NOT NULL, created_at TEXT NOT NULL, read INTEGER NOT NULL DEFAULT 0
+                message TEXT NOT NULL, created_at TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS activity_log (
                 id TEXT PRIMARY KEY, actor_id TEXT REFERENCES users(id), action TEXT NOT NULL,
@@ -117,6 +160,19 @@ def _initialize_database() -> None:
             );
             """
         )
+        if db.postgres:
+            columns = {
+                row["column_name"] for row in db.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='notifications'"
+                ).fetchall()
+            }
+        else:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(notifications)").fetchall()}
+        if "is_read" not in columns:
+            db.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0")
+            if "read" in columns:
+                db.execute('UPDATE notifications SET is_read="read"')
         if not db.execute("SELECT 1 FROM requirements LIMIT 1").fetchone():
             samples = [
                 ("Departmental clearance", "Confirm departmental records and return of borrowed items.", "Department", "Computer Science", "departmental_officer"),
@@ -236,7 +292,7 @@ class StaffUpdate(BaseModel):
     faculty: str | None = Field(default=None, max_length=120)
 
 
-def _public_user(row: sqlite3.Row) -> dict:
+def _public_user(row) -> dict:
     return {key: row[key] for key in row.keys() if key != "password_hash"}
 
 
@@ -259,14 +315,14 @@ def require_roles(user: dict, *roles: str) -> None:
         raise HTTPException(status_code=403, detail="You are not authorised to perform this action.")
 
 
-def _add_notification(db: sqlite3.Connection, user_id: str, message: str) -> None:
+def _add_notification(db: DatabaseConnection, user_id: str, message: str) -> None:
     db.execute(
         "INSERT INTO notifications (id,user_id,message,created_at) VALUES (?,?,?,?)",
         (str(uuid4()), user_id, message, now()),
     )
 
 
-def _application_rows(db: sqlite3.Connection, student_id: str | None = None) -> list[dict]:
+def _application_rows(db: DatabaseConnection, student_id: str | None = None) -> list[dict]:
     query = """SELECT a.*,u.full_name,u.matric_no,u.department,u.faculty,u.level,
         COUNT(s.id) AS total,
         SUM(CASE WHEN s.status='approved' THEN 1 ELSE 0 END) AS approved,
@@ -297,7 +353,7 @@ def _application_rows(db: sqlite3.Connection, student_id: str | None = None) -> 
     return result
 
 
-def _submission_rows(db: sqlite3.Connection, application_id: str | None = None) -> list[dict]:
+def _submission_rows(db: DatabaseConnection, application_id: str | None = None) -> list[dict]:
     query = """SELECT s.*,r.title,r.description,r.category,r.department,r.assigned_role,r.mandatory,
         a.student_id,a.session,u.full_name,u.matric_no,u.email,u.level
         FROM submissions s JOIN requirements r ON r.id=s.requirement_id
@@ -348,7 +404,7 @@ def register(payload: RegisterPayload):
                  payload.level.strip(), payload.admission_year.strip(), payload.graduation_year.strip(),
                  _password_hash(payload.password), now()),
             )
-        except sqlite3.IntegrityError as exc:
+        except INTEGRITY_ERRORS as exc:
             raise HTTPException(status_code=409, detail="That matriculation number or email is already registered.") from exc
         row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     return _public_user(row)
@@ -395,7 +451,7 @@ def dashboard(user: dict = Depends(current_user)):
             counts = {state: sum(item["status"] == state for item in subs) for state in
                       ("approved", "submitted", "rejected", "changes_requested", "outstanding")}
             notices = [dict(row) for row in db.execute(
-                "SELECT id,message,created_at,read FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 5",
+                "SELECT id,message,created_at,is_read AS read FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 5",
                 (user["id"],),
             ).fetchall()]
             return {"role": user["role"], "application": own_app, "counts": counts, "notifications": notices}
@@ -405,8 +461,8 @@ def dashboard(user: dict = Depends(current_user)):
         if user["role"] == "faculty_officer":
             pass
         all_apps = _application_rows(db)
-        staff_count = db.execute("SELECT COUNT(*) FROM users WHERE role!='student'").fetchone()[0]
-        students_count = db.execute("SELECT COUNT(*) FROM users WHERE role='student'").fetchone()[0]
+        staff_count = db.execute("SELECT COUNT(*) AS count FROM users WHERE role!='student'").fetchone()["count"]
+        students_count = db.execute("SELECT COUNT(*) AS count FROM users WHERE role='student'").fetchone()["count"]
         return {
             "role": user["role"],
             "counts": {
@@ -644,7 +700,7 @@ def review_submission(submission_id: str, payload: ReviewPayload, user: dict = D
 def notifications(user: dict = Depends(current_user)):
     with connect() as db:
         return [dict(row) for row in db.execute(
-            "SELECT id,message,created_at,read FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 30",
+            "SELECT id,message,created_at,is_read AS read FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 30",
             (user["id"],),
         ).fetchall()]
 
@@ -652,7 +708,7 @@ def notifications(user: dict = Depends(current_user)):
 @app.patch("/api/notifications/{notification_id}/read")
 def mark_notification_read(notification_id: str, user: dict = Depends(current_user)):
     with connect() as db:
-        if not db.execute("UPDATE notifications SET read=1 WHERE id=? AND user_id=?", (notification_id, user["id"])).rowcount:
+        if not db.execute("UPDATE notifications SET is_read=1 WHERE id=? AND user_id=?", (notification_id, user["id"])).rowcount:
             raise HTTPException(status_code=404, detail="Notification not found.")
     return {"ok": True}
 
@@ -706,7 +762,7 @@ def create_staff(payload: StaffCreate, user: dict = Depends(current_user)):
                  payload.department.strip() or user["department"], payload.faculty.strip(),
                  _password_hash(payload.password), now()),
             )
-        except sqlite3.IntegrityError as exc:
+        except INTEGRITY_ERRORS as exc:
             raise HTTPException(status_code=409, detail="That email address is already in use.") from exc
         row = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         db.execute(
@@ -744,7 +800,7 @@ def update_staff(user_id: str, payload: StaffUpdate, user: dict = Depends(curren
                     user_id,
                 ),
             )
-        except sqlite3.IntegrityError as exc:
+        except INTEGRITY_ERRORS as exc:
             raise HTTPException(status_code=409, detail="That email address is already in use.") from exc
         if payload.password is not None or payload.role is not None or payload.department is not None:
             db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
