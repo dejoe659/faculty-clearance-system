@@ -39,7 +39,7 @@ Demo data is seeded only when `CLEARANCE_DEMO_MODE=true` and the database has no
 | Faculty administrator | `grace.admin@northstar.edu` |
 | Super administrator | `admin@northstar.edu` |
 
-Without demo mode, students can register from the sign-in page. Set `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL` and `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD` on the API service to create the initial super administrator, even if student accounts already exist. If the configured email belongs to an existing account, that account is promoted and its password is set to the bootstrap password. Bootstrap does not change an existing super administrator. The password must be at least 10 characters. Remove these bootstrap variables after confirming admin access.
+Without demo mode, students can register from the sign-in page. Set `CLEARANCE_BOOTSTRAP_ADMIN_EMAIL` and `CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD` on the API service to create the initial super administrator, even if student accounts already exist. If the configured email belongs to an existing account, that account is promoted and its password is set to the bootstrap password. Bootstrap does not change an existing super administrator. The password must be at least 10 characters. Invalid bootstrap settings are logged and do not stop the API from starting. Remove these bootstrap variables after confirming admin access.
 
 ## Configuration and storage
 

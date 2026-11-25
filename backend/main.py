@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -190,10 +191,15 @@ def _initialize_database() -> None:
             )
         bootstrap_email = os.getenv("CLEARANCE_BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
         bootstrap_password = os.getenv("CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD", "")
-        if bool(bootstrap_email) != bool(bootstrap_password) or (bootstrap_password and len(bootstrap_password) < 10):
-            raise ValueError("Set both bootstrap admin variables and use a password of at least 10 characters.")
-        if bootstrap_email and bootstrap_password:
-            if not db.execute("SELECT 1 FROM users WHERE role='super_admin' LIMIT 1").fetchone():
+        if bool(bootstrap_email) != bool(bootstrap_password) or (
+            bootstrap_password and len(bootstrap_password) < 10
+        ):
+            logging.getLogger(__name__).error(
+                "Bootstrap admin not created: set both bootstrap variables and use a password of at least 10 characters."
+            )
+        elif bootstrap_email and bootstrap_password:
+            has_super_admin = db.execute("SELECT 1 FROM users WHERE role='super_admin' LIMIT 1").fetchone()
+            if not has_super_admin:
                 existing_user = db.execute(
                     "SELECT id FROM users WHERE lower(email)=?", (bootstrap_email,)
                 ).fetchone()

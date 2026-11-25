@@ -144,6 +144,26 @@ class DatabaseConnectionTests(unittest.TestCase):
             self.assertEqual(users[0]["role"], "super_admin")
             self.assertTrue(main._password_matches("AdminPass123!", users[0]["password_hash"]))
 
+    def test_invalid_bootstrap_settings_do_not_stop_database_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "clearance.db"
+            with patch.object(main, "DATABASE_URL", ""), patch.object(
+                main, "DATABASE_PATH", database_path
+            ), patch.dict(
+                main.os.environ,
+                {
+                    "CLEARANCE_BOOTSTRAP_ADMIN_EMAIL": "admin@example.edu",
+                    "CLEARANCE_BOOTSTRAP_ADMIN_PASSWORD": "",
+                },
+            ):
+                with self.assertLogs("main", level="ERROR") as logged:
+                    main._initialize_database()
+                with main.connect() as db:
+                    user_count = db.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+
+            self.assertEqual(user_count, 0)
+            self.assertIn("Bootstrap admin not created", logged.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()
