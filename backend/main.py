@@ -337,7 +337,10 @@ def _application_rows(db: DatabaseConnection, student_id: str | None = None) -> 
     if student_id:
         query += " WHERE a.student_id=?"
         params = (student_id,)
-    query += " GROUP BY a.id ORDER BY a.created_at DESC"
+    query += (
+        " GROUP BY a.id,u.full_name,u.matric_no,u.department,u.faculty,u.level"
+        " ORDER BY a.created_at DESC"
+    )
     result = []
     for row in db.execute(query, params).fetchall():
         item = dict(row)
