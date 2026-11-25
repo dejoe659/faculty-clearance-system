@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "ClearanceHub — Faculty clearance",
+  title: "ClearanceHub — University of Nigeria, Nsukka",
   description: "A secure faculty clearance portal for students, clearance officers, and administrators."
 };
 

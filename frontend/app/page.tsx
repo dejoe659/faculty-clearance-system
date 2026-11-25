@@ -328,7 +328,7 @@ export default function Home() {
         <a className="brand" href="#" onClick={event => { event.preventDefault(); setActive("Overview"); }}>
           <span className="brand-mark"><GraduationCap size={21} /></span><span>Clearance<span className="brand-accent">Hub</span></span>
         </a>
-        <div className="workspace-switch"><span className="workspace-avatar">N</span><span className="workspace-copy"><strong>Northstar University</strong><small>{user.faculty}</small></span><ChevronDown size={15} /></div>
+        <div className="workspace-switch"><span className="workspace-avatar">U</span><span className="workspace-copy"><strong>University of Nigeria, Nsukka</strong><small>{user.faculty}</small></span><ChevronDown size={15} /></div>
         <span className="nav-caption">WORKSPACE</span>
         <nav className="nav-list" aria-label="Main navigation">
           {nav.map(({ name, icon: Icon }) => <button key={name} className={`nav-item ${active === name ? "active" : ""}`} onClick={() => { setActive(name); setMobileNav(false); }}>
@@ -375,7 +375,7 @@ function AuthScreen({ registerMode, setRegisterMode, onSignIn, onRegister, busy 
 }) {
   return <main className="auth-page">
     <section className="auth-art"><div className="auth-brand"><span className="brand-mark"><GraduationCap size={22} /></span>Clearance<span>Hub</span></div>
-      <div className="auth-message"><span className="auth-kicker">NORTHSTAR UNIVERSITY</span><h1>Your next chapter<br />starts <em>cleared.</em></h1><p>Complete every clearance step online. No queues, no office-to-office visits, just a clear path to graduation.</p>
+      <div className="auth-message"><span className="auth-kicker">UNIVERSITY OF NIGERIA, NSUKKA</span><h1>Your next chapter<br />starts <em>cleared.</em></h1><p>Complete every clearance step online. No queues, no office-to-office visits, just a clear path to graduation.</p>
         <div className="auth-feature"><span><Check size={15} /></span>One connected clearance journey</div><div className="auth-feature"><span><Check size={15} /></span>Real-time updates from your faculty</div></div>
       <div className="auth-art-footer">A simpler way to cross the finish line.</div>
     </section>
@@ -387,7 +387,7 @@ function AuthScreen({ registerMode, setRegisterMode, onSignIn, onRegister, busy 
         <div className="form-grid">
           <Field label="Full name"><input required name="full_name" placeholder="e.g. Amina Yusuf" /></Field>
           <Field label="Matriculation number"><input required name="matric_no" placeholder="e.g. CSC/22/0418" /></Field>
-          <Field label="University email"><input required type="email" name="email" placeholder="you@northstar.edu" /></Field>
+          <Field label="University email"><input required type="email" name="email" placeholder="student@example.com" /></Field>
           <Field label="Phone number"><input name="phone" placeholder="+234 800 000 0000" /></Field>
           <Field label="Faculty"><input required name="faculty" defaultValue="Faculty of Science" /></Field>
           <Field label="Department"><input required name="department" defaultValue="Computer Science" /></Field>
@@ -402,7 +402,6 @@ function AuthScreen({ registerMode, setRegisterMode, onSignIn, onRegister, busy 
         <Field label="Matriculation number or staff email"><input required name="identifier" autoComplete="username" placeholder="e.g. CSC/22/0418" /></Field>
         <Field label="Password"><input required type="password" name="password" autoComplete="current-password" placeholder="Enter your password" /></Field>
         <button className="button button-primary auth-submit" disabled={busy}>{busy ? "Signing in…" : "Sign in securely"}<ArrowRight size={16} /></button>
-        <div className="demo-box"><ShieldCheck size={16} /><span><strong>Demo access</strong><small>Matric: CSC/22/0418 · Staff: evelyn.officer@northstar.edu<br />Password for all demo accounts: Clearance123!</small></span></div>
       </form>}
       <div className="auth-switch">{registerMode ? "Already registered?" : "New student?"}<button onClick={() => setRegisterMode(!registerMode)}>{registerMode ? "Sign in" : "Create an account"}</button></div>
       <div className="auth-privacy"><ShieldCheck size={14} />Your academic records are protected and only shared with assigned officers.</div>
@@ -580,7 +579,7 @@ function StudentsPage({ students, applications, submissions, isAdmin, canCreateA
     {isAdmin && <div className="admin-layout staff-management">
       <form className="card requirement-form" onSubmit={onCreateStaff}><div className="card-heading"><div><h2>Add a staff member</h2><p>Create an officer account and assign its review scope.</p></div></div>
         <Field label="Full name"><input required name="full_name" minLength={2} placeholder="Staff member name" /></Field>
-        <Field label="University email"><input required name="email" type="email" placeholder="name@northstar.edu" /></Field>
+        <Field label="University email"><input required name="email" type="email" placeholder="name@example.com" /></Field>
         <div className="form-grid"><Field label="Role"><select name="role" defaultValue="departmental_officer"><option value="departmental_officer">Departmental officer</option><option value="faculty_officer">Faculty officer</option>{canCreateAdmins && <option value="faculty_admin">Faculty administrator</option>}{canCreateAdmins && <option value="super_admin">Super administrator</option>}</select></Field>
           <Field label="Department"><input name="department" placeholder="e.g. Computer Science" /></Field></div>
         <Field label="Faculty"><input name="faculty" defaultValue="Faculty of Science" /></Field>
@@ -626,12 +625,12 @@ function ProfilePage({ user }: { user: User }) {
 
 function CertificatePage({ certificate }: { certificate: Application & { programme: string } }) {
   return <div className="certificate-wrap"><div className="certificate-actions"><div><span className="eyebrow">VERIFIABLE CONFIRMATION</span><h1>Clearance certificate</h1></div><button className="button button-primary" onClick={() => window.print()}><Printer size={16} />Print or save PDF</button></div>
-    <article className="certificate-print"><div className="certificate-top"><span className="certificate-crest"><GraduationCap size={32} /></span><span className="certificate-university">NORTHSTAR UNIVERSITY<small>OFFICE OF THE REGISTRAR</small></span><span className="certificate-seal"><ShieldCheck size={30} /></span></div>
+    <article className="certificate-print"><div className="certificate-top"><span className="certificate-crest"><GraduationCap size={32} /></span><span className="certificate-university">UNIVERSITY OF NIGERIA, NSUKKA<small>OFFICE OF THE REGISTRAR</small></span><span className="certificate-seal"><ShieldCheck size={30} /></span></div>
       <div className="certificate-rule" /><span className="certificate-kicker">FACULTY CLEARANCE CONFIRMATION</span><h2>Certificate of Clearance</h2><p className="certificate-intro">This is to certify that</p><h3>{certificate.full_name}</h3>
       <p className="certificate-body">Matriculation number <strong>{certificate.matric_no}</strong>, of the <strong>{certificate.department}</strong> Department, <strong>{certificate.faculty}</strong>, has completed all mandatory clearance requirements for the <strong>{certificate.session}</strong> academic session.</p>
       <div className="certificate-stamp"><CheckCircle2 size={17} />FULLY CLEARED</div>
       <div className="certificate-meta"><div><span>PROGRAMME</span><strong>{certificate.programme}</strong></div><div><span>LEVEL</span><strong>{certificate.level}</strong></div><div><span>VERIFICATION NUMBER</span><strong>{certificate.verification_code}</strong></div><div><span>ISSUED</span><strong>{dateLabel(new Date().toISOString())}</strong></div></div>
-      <div className="certificate-footer"><span>Verify this certificate using the verification number above.</span><span className="signature-line">Registrar, Northstar University</span></div>
+      <div className="certificate-footer"><span>Verify this certificate using the verification number above.</span><span className="signature-line">Registrar, University of Nigeria, Nsukka</span></div>
     </article>
   </div>;
 }
