@@ -126,6 +126,7 @@ def _initialize_database() -> None:
                 programme TEXT NOT NULL DEFAULT 'B.Sc. Computer Science',
                 level TEXT NOT NULL DEFAULT '400', admission_year TEXT NOT NULL DEFAULT '2022',
                 graduation_year TEXT NOT NULL DEFAULT '2026', password_hash TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS sessions (
@@ -159,9 +160,20 @@ def _initialize_database() -> None:
                 id TEXT PRIMARY KEY, actor_id TEXT REFERENCES users(id), action TEXT NOT NULL,
                 target_id TEXT, created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS system_settings (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                registration_enabled INTEGER NOT NULL DEFAULT 1,
+                applications_enabled INTEGER NOT NULL DEFAULT 1
+            );
             """
         )
         if db.postgres:
+            user_columns = {
+                row["column_name"] for row in db.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=current_schema() AND table_name='users'"
+                ).fetchall()
+            }
             columns = {
                 row["column_name"] for row in db.execute(
                     "SELECT column_name FROM information_schema.columns "
@@ -169,7 +181,12 @@ def _initialize_database() -> None:
                 ).fetchall()
             }
         else:
+            user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()}
             columns = {row["name"] for row in db.execute("PRAGMA table_info(notifications)").fetchall()}
+        if "active" not in user_columns:
+            db.execute("ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+        if not db.execute("SELECT 1 FROM system_settings WHERE id=1").fetchone():
+            db.execute("INSERT INTO system_settings (id,registration_enabled,applications_enabled) VALUES (1,1,1)")
         if "is_read" not in columns:
             db.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0")
             if "read" in columns:
@@ -307,6 +324,28 @@ class StaffUpdate(BaseModel):
     faculty: str | None = Field(default=None, max_length=120)
 
 
+class StudentUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=2, max_length=120)
+    matric_no: str | None = Field(default=None, min_length=3, max_length=40)
+    email: str | None = Field(default=None, min_length=5, max_length=160)
+    phone: str | None = Field(default=None, max_length=40)
+    faculty: str | None = Field(default=None, max_length=120)
+    department: str | None = Field(default=None, max_length=120)
+    programme: str | None = Field(default=None, max_length=120)
+    level: str | None = Field(default=None, max_length=20)
+    admission_year: str | None = Field(default=None, max_length=4)
+    graduation_year: str | None = Field(default=None, max_length=4)
+
+
+class StudentStatusUpdate(BaseModel):
+    active: bool
+
+
+class AdminSettingsUpdate(BaseModel):
+    registration_enabled: bool | None = None
+    applications_enabled: bool | None = None
+
+
 def _public_user(row) -> dict:
     return {key: row[key] for key in row.keys() if key != "password_hash"}
 
@@ -318,7 +357,7 @@ def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bear
     with connect() as db:
         row = db.execute(
             """SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
-            WHERE s.token_hash=? AND s.expires_at>?""", (token_hash, now())
+            WHERE s.token_hash=? AND s.expires_at>? AND u.active=1""", (token_hash, now())
         ).fetchone()
     if not row:
         raise HTTPException(status_code=401, detail="Your session has expired. Please sign in again.")
@@ -406,12 +445,29 @@ def health():
     return {"status": "healthy"}
 
 
+@app.get("/api/auth/options")
+def auth_options():
+    with connect() as db:
+        settings = db.execute(
+            "SELECT registration_enabled,applications_enabled FROM system_settings WHERE id=1"
+        ).fetchone()
+    return {
+        "registration_enabled": bool(settings["registration_enabled"]),
+        "applications_enabled": bool(settings["applications_enabled"]),
+    }
+
+
 @app.post("/api/auth/register", status_code=201)
 def register(payload: RegisterPayload):
     matric_no = payload.matric_no.strip().upper()
     email = payload.email.strip().lower()
     user_id = str(uuid4())
     with connect() as db:
+        settings = db.execute(
+            "SELECT registration_enabled FROM system_settings WHERE id=1"
+        ).fetchone()
+        if not settings["registration_enabled"]:
+            raise HTTPException(status_code=403, detail="Student registration is currently closed.")
         try:
             db.execute(
                 """INSERT INTO users (id,role,full_name,matric_no,email,phone,faculty,department,programme,
@@ -437,6 +493,8 @@ def login(payload: LoginPayload):
         ).fetchone()
         if not row or not _password_matches(payload.password, row["password_hash"]):
             raise HTTPException(status_code=401, detail="The sign-in details are incorrect.")
+        if not row["active"]:
+            raise HTTPException(status_code=403, detail="This account is suspended. Contact the faculty administrator.")
         token = secrets.token_urlsafe(36)
         expires = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
         db.execute(
@@ -562,6 +620,11 @@ def list_applications(user: dict = Depends(current_user)):
 def create_application(user: dict = Depends(current_user)):
     require_roles(user, "student")
     with connect() as db:
+        settings = db.execute(
+            "SELECT applications_enabled FROM system_settings WHERE id=1"
+        ).fetchone()
+        if not settings["applications_enabled"]:
+            raise HTTPException(status_code=403, detail="Starting new clearance applications is currently disabled.")
         if db.execute("SELECT 1 FROM applications WHERE student_id=?", (user["id"],)).fetchone():
             raise HTTPException(status_code=409, detail="You already have a clearance application.")
         active = db.execute("SELECT id,department FROM requirements WHERE active=1 ORDER BY position").fetchall()
@@ -761,6 +824,116 @@ def list_users(user: dict = Depends(current_user)):
         return [_public_user(row) for row in db.execute(
             "SELECT * FROM users ORDER BY role,full_name"
         ).fetchall()]
+
+
+@app.get("/api/admin/settings")
+def admin_settings(user: dict = Depends(current_user)):
+    require_roles(user, "faculty_admin", "super_admin")
+    with connect() as db:
+        settings = db.execute(
+            "SELECT registration_enabled,applications_enabled FROM system_settings WHERE id=1"
+        ).fetchone()
+    return {
+        "registration_enabled": bool(settings["registration_enabled"]),
+        "applications_enabled": bool(settings["applications_enabled"]),
+    }
+
+
+@app.patch("/api/admin/settings")
+def update_admin_settings(payload: AdminSettingsUpdate, user: dict = Depends(current_user)):
+    require_roles(user, "faculty_admin", "super_admin")
+    updates = {
+        key: value for key, value in payload.model_dump(exclude_unset=True).items()
+        if value is not None
+    }
+    if not updates:
+        raise HTTPException(status_code=422, detail="Choose at least one setting to update.")
+    allowed = {"registration_enabled", "applications_enabled"}
+    if not set(updates).issubset(allowed):
+        raise HTTPException(status_code=422, detail="Unsupported system setting.")
+    with connect() as db:
+        assignments = ",".join(f"{key}=?" for key in updates)
+        values = tuple(int(value) for value in updates.values())
+        db.execute(f"UPDATE system_settings SET {assignments} WHERE id=1", values)
+        db.execute(
+            "INSERT INTO activity_log (id,actor_id,action,target_id,created_at) VALUES (?,?,?,?,?)",
+            (str(uuid4()), user["id"], "student_access_settings_updated", "system_settings", now()),
+        )
+        settings = db.execute(
+            "SELECT registration_enabled,applications_enabled FROM system_settings WHERE id=1"
+        ).fetchone()
+    return {
+        "registration_enabled": bool(settings["registration_enabled"]),
+        "applications_enabled": bool(settings["applications_enabled"]),
+    }
+
+
+@app.patch("/api/admin/students/{student_id}")
+def update_student(student_id: str, payload: StudentUpdate, user: dict = Depends(current_user)):
+    require_roles(user, "faculty_admin", "super_admin")
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=422, detail="Provide at least one student profile field to update.")
+    with connect() as db:
+        existing = db.execute(
+            "SELECT * FROM users WHERE id=? AND role='student'", (student_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Student account not found.")
+        values_by_field = {}
+        for field, value in updates.items():
+            if value is not None:
+                if field == "email":
+                    value = value.strip().lower()
+                elif field == "matric_no":
+                    value = value.strip().upper()
+                else:
+                    value = value.strip()
+                values_by_field[field] = value
+        if not values_by_field:
+            raise HTTPException(status_code=422, detail="Provide at least one student profile field to update.")
+        assignments = ",".join(f"{field}=?" for field in values_by_field)
+        try:
+            db.execute(
+                f"UPDATE users SET {assignments} WHERE id=?",
+                (*values_by_field.values(), student_id),
+            )
+        except INTEGRITY_ERRORS as exc:
+            raise HTTPException(
+                status_code=409, detail="That email or matriculation number is already in use."
+            ) from exc
+        db.execute(
+            "INSERT INTO activity_log (id,actor_id,action,target_id,created_at) VALUES (?,?,?,?,?)",
+            (str(uuid4()), user["id"], "student_profile_updated", student_id, now()),
+        )
+        updated = db.execute("SELECT * FROM users WHERE id=?", (student_id,)).fetchone()
+    return _public_user(updated)
+
+
+@app.patch("/api/admin/students/{student_id}/status")
+def update_student_status(
+    student_id: str, payload: StudentStatusUpdate, user: dict = Depends(current_user)
+):
+    require_roles(user, "faculty_admin", "super_admin")
+    with connect() as db:
+        existing = db.execute(
+            "SELECT * FROM users WHERE id=? AND role='student'", (student_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Student account not found.")
+        db.execute("UPDATE users SET active=? WHERE id=?", (int(payload.active), student_id))
+        if not payload.active:
+            db.execute("DELETE FROM sessions WHERE user_id=?", (student_id,))
+        db.execute(
+            "INSERT INTO activity_log (id,actor_id,action,target_id,created_at) VALUES (?,?,?,?,?)",
+            (
+                str(uuid4()), user["id"],
+                "student_account_activated" if payload.active else "student_account_suspended",
+                student_id, now(),
+            ),
+        )
+        updated = db.execute("SELECT * FROM users WHERE id=?", (student_id,)).fetchone()
+    return _public_user(updated)
 
 
 @app.post("/api/admin/users", status_code=201)

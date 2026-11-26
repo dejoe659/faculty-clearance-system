@@ -13,7 +13,9 @@ type Role = "student" | "departmental_officer" | "faculty_officer" | "faculty_ad
 type User = {
   id: string; role: Role; full_name: string; matric_no: string | null; email: string; phone: string;
   faculty: string; department: string; programme: string; level: string; admission_year: string; graduation_year: string;
+  active: boolean | number;
 };
+type AccessSettings = { registration_enabled: boolean; applications_enabled: boolean };
 type Requirement = {
   id: string; title: string; description: string; category: string; department: string;
   assigned_role: string; mandatory: number | boolean; position: number; active: number | boolean;
@@ -76,7 +78,7 @@ function roleName(role: Role) {
   return ({ student: "Student", departmental_officer: "Department officer", faculty_officer: "Faculty officer", faculty_admin: "Faculty administrator", super_admin: "Super administrator" })[role];
 }
 function statusName(status: string) {
-  return ({ approved: "Approved", submitted: "Under review", rejected: "Rejected", changes_requested: "Correction needed", outstanding: "Outstanding", in_progress: "In progress", fully_cleared: "Fully cleared" })[status] || status.replaceAll("_", " ");
+  return ({ approved: "Approved", submitted: "Under review", rejected: "Rejected", changes_requested: "Correction needed", outstanding: "Outstanding", in_progress: "In progress", fully_cleared: "Fully cleared", active: "Active", suspended: "Suspended" })[status] || status.replaceAll("_", " ");
 }
 function dateLabel(value: string) {
   return new Intl.DateTimeFormat("en", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
@@ -92,6 +94,9 @@ export default function Home() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [students, setStudents] = useState<User[]>([]);
+  const [adminSettings, setAdminSettings] = useState<AccessSettings>({ registration_enabled: true, applications_enabled: true });
+  const [authOptions, setAuthOptions] = useState<AccessSettings>({ registration_enabled: true, applications_enabled: true });
+  const [editingStudent, setEditingStudent] = useState<User | null>(null);
   const [report, setReport] = useState<{ departments: { department: string; applications: number; fully_cleared: number }[] } | null>(null);
   const [activity, setActivity] = useState<{ id: string; actor_name: string; action: string; target_id: string; created_at: string }[]>([]);
   const [certificate, setCertificate] = useState<Application & { programme: string } | null>(null);
@@ -135,9 +140,17 @@ export default function Home() {
     if (currentUser.role === "faculty_admin" || currentUser.role === "super_admin") {
       setStudents(await api("/api/admin/users", auth));
       setReport(await api("/api/admin/report", auth));
+      const settings = await api("/api/admin/settings", auth) as AccessSettings;
+      setAdminSettings(settings);
     }
     if (currentUser.role === "super_admin") setActivity(await api("/api/admin/activity", auth));
   }, []);
+
+  useEffect(() => {
+    api("/api/auth/options", "")
+      .then((options: AccessSettings) => setAuthOptions(options))
+      .catch(error => notify(error instanceof Error ? error.message : "Could not load registration settings."));
+  }, [notify]);
 
   useEffect(() => {
     const savedToken = window.sessionStorage.getItem("clearance-token") || "";
@@ -293,6 +306,49 @@ export default function Home() {
     finally { setBusy(false); }
   }
 
+  async function saveStudent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingStudent) return;
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    try {
+      await api(`/api/admin/students/${editingStudent.id}`, token, {
+        method: "PATCH", body: JSON.stringify(Object.fromEntries(form.entries()))
+      });
+      setEditingStudent(null);
+      await refresh();
+      notify("Student profile updated.");
+    } catch (error) { notify(error instanceof Error ? error.message : "Could not update student profile."); }
+    finally { setBusy(false); }
+  }
+
+  async function setStudentActive(student: User, active: boolean) {
+    const action = active ? "reactivate" : "suspend";
+    if (!window.confirm(`${active ? "Reactivate" : "Suspend"} ${student.full_name}'s account?`)) return;
+    setBusy(true);
+    try {
+      await api(`/api/admin/students/${student.id}/status`, token, {
+        method: "PATCH", body: JSON.stringify({ active })
+      });
+      await refresh();
+      notify(`Student account ${active ? "reactivated" : "suspended"}.`);
+    } catch (error) { notify(error instanceof Error ? error.message : `Could not ${action} student account.`); }
+    finally { setBusy(false); }
+  }
+
+  async function saveAdminSettings(update: Partial<AccessSettings>) {
+    setBusy(true);
+    try {
+      const settings = await api("/api/admin/settings", token, {
+        method: "PATCH", body: JSON.stringify(update)
+      }) as AccessSettings;
+      setAdminSettings(settings);
+      setAuthOptions(settings);
+      notify("Student access settings updated.");
+    } catch (error) { notify(error instanceof Error ? error.message : "Could not update student access settings."); }
+    finally { setBusy(false); }
+  }
+
   function editRequirement(item: Requirement) {
     setEditingRequirement(item.id);
     setRequirementDraft({
@@ -316,7 +372,7 @@ export default function Home() {
   }
 
   if (!ready) return <main className="loading-screen"><div className="brand-mark"><GraduationCap size={24} /></div><span>Loading your clearance workspace…</span></main>;
-  if (!user) return <AuthScreen registerMode={registerMode} setRegisterMode={setRegisterMode} onSignIn={signIn} onRegister={register} busy={busy} />;
+  if (!user) return <AuthScreen registerMode={registerMode} setRegisterMode={setRegisterMode} registrationEnabled={authOptions.registration_enabled} onSignIn={signIn} onRegister={register} busy={busy} />;
 
   const nav = sectionsFor(user.role);
   const studentApp = dashboard?.application;
@@ -351,11 +407,11 @@ export default function Home() {
           </div>
         </header>
         <div className="content">
-          {active === "Overview" && <Overview user={user} dashboard={dashboard} submissions={submissions} onNavigate={setActive} onStart={startApplication} onCertificate={showCertificate} busy={busy} />}
-          {active === "Clearance" && <ClearancePage application={studentApp || null} submissions={submissions} onStart={startApplication} onUpload={uploadDocument} onDownload={downloadDocument} onPreview={previewDocument} onCertificate={showCertificate} busy={busy} />}
+          {active === "Overview" && <Overview user={user} dashboard={dashboard} submissions={submissions} onNavigate={setActive} onStart={startApplication} onCertificate={showCertificate} applicationsEnabled={authOptions.applications_enabled} busy={busy} />}
+          {active === "Clearance" && <ClearancePage application={studentApp || null} submissions={submissions} onStart={startApplication} onUpload={uploadDocument} onDownload={downloadDocument} onPreview={previewDocument} onCertificate={showCertificate} applicationsEnabled={authOptions.applications_enabled} busy={busy} />}
           {active === "Review queue" && <ReviewQueue items={filteredSubmissions} search={search} setSearch={setSearch} filter={statusFilter} setFilter={setStatusFilter} onReview={item => { setReview(item); setReviewComment(item.comment || ""); }} onDownload={downloadDocument} onPreview={previewDocument} />}
           {active === "Requirements" && <RequirementsPage items={requirements} draft={requirementDraft} setDraft={setRequirementDraft} editing={editingRequirement} onSubmit={saveRequirement} onEdit={editRequirement} onDelete={removeRequirement} onCancel={() => { setEditingRequirement(null); setRequirementDraft(blankRequirement); }} busy={busy} />}
-          {active === "Students" && <StudentsPage students={students} applications={applications} submissions={submissions} isAdmin={user.role === "faculty_admin" || user.role === "super_admin"} canCreateAdmins={user.role === "super_admin"} onCreateStaff={createStaff} busy={busy} />}
+          {active === "Students" && <StudentsPage students={students} applications={applications} submissions={submissions} isAdmin={user.role === "faculty_admin" || user.role === "super_admin"} canCreateAdmins={user.role === "super_admin"} settings={adminSettings} onSettings={saveAdminSettings} onEditStudent={setEditingStudent} onSetStudentActive={setStudentActive} onCreateStaff={createStaff} busy={busy} />}
           {active === "Reports" && <ReportsPage report={report} dashboard={dashboard} />}
           {active === "Activity" && <ActivityPage items={activity} />}
           {active === "Profile" && <ProfilePage user={user} />}
@@ -365,12 +421,13 @@ export default function Home() {
       {mobileNav && <button className="nav-scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
       {notice && <div className="toast" role="status"><CheckCircle2 size={18} />{notice}<button onClick={() => setNotice("")} aria-label="Dismiss"><X size={15} /></button></div>}
       {review && <ReviewModal item={review} comment={reviewComment} setComment={setReviewComment} busy={busy} onClose={() => setReview(null)} onDecision={saveReview} onDownload={() => downloadDocument(review)} onPreview={() => previewDocument(review)} />}
+      {editingStudent && <StudentEditModal student={editingStudent} busy={busy} onClose={() => setEditingStudent(null)} onSave={saveStudent} />}
     </main>
   );
 }
 
-function AuthScreen({ registerMode, setRegisterMode, onSignIn, onRegister, busy }: {
-  registerMode: boolean; setRegisterMode: (value: boolean) => void; onSignIn: (event: FormEvent<HTMLFormElement>) => void;
+function AuthScreen({ registerMode, setRegisterMode, registrationEnabled, onSignIn, onRegister, busy }: {
+  registerMode: boolean; setRegisterMode: (value: boolean) => void; registrationEnabled: boolean; onSignIn: (event: FormEvent<HTMLFormElement>) => void;
   onRegister: (event: FormEvent<HTMLFormElement>) => void; busy: boolean;
 }) {
   return <main className="auth-page">
@@ -403,7 +460,7 @@ function AuthScreen({ registerMode, setRegisterMode, onSignIn, onRegister, busy 
         <Field label="Password"><input required type="password" name="password" autoComplete="current-password" placeholder="Enter your password" /></Field>
         <button className="button button-primary auth-submit" disabled={busy}>{busy ? "Signing in…" : "Sign in securely"}<ArrowRight size={16} /></button>
       </form>}
-      <div className="auth-switch">{registerMode ? "Already registered?" : "New student?"}<button onClick={() => setRegisterMode(!registerMode)}>{registerMode ? "Sign in" : "Create an account"}</button></div>
+      <div className="auth-switch">{registerMode ? "Already registered?" : registrationEnabled ? "New student?" : "Student registration is currently closed."}{(registerMode || registrationEnabled) && <button onClick={() => setRegisterMode(!registerMode)}>{registerMode ? "Sign in" : "Create an account"}</button>}</div>
       <div className="auth-privacy"><ShieldCheck size={14} />Your academic records are protected and only shared with assigned officers.</div>
     </div></section>
   </main>;
@@ -425,9 +482,9 @@ function ProgressBar({ value }: { value: number }) {
   return <div className="progress-track" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${value}%` }} /></div>;
 }
 
-function Overview({ user, dashboard, submissions, onNavigate, onStart, onCertificate, busy }: {
+function Overview({ user, dashboard, submissions, onNavigate, onStart, onCertificate, applicationsEnabled, busy }: {
   user: User; dashboard: Dashboard | null; submissions: Submission[]; onNavigate: (section: Section) => void;
-  onStart: () => void; onCertificate: (id: string) => void; busy: boolean;
+  onStart: () => void; onCertificate: (id: string) => void; applicationsEnabled: boolean; busy: boolean;
 }) {
   if (user.role === "student") {
     const application = dashboard?.application;
@@ -437,7 +494,8 @@ function Overview({ user, dashboard, submissions, onNavigate, onStart, onCertifi
       <PageHeader eyebrow={`${user.faculty.toUpperCase()} · ${user.department.toUpperCase()}`} title={`Welcome, ${user.full_name.split(" ")[0]}`} description="Here's your personal clearance overview for the 2025 / 2026 session." action={application ? <button className="button button-primary" onClick={() => onNavigate("Clearance")}><ListChecks size={16} />Continue clearance</button> : undefined} />
       <div className="student-hero"><div className="hero-copy"><span className="hero-label"><span />CLEARANCE APPLICATION</span><h2>{application ? (progress === 100 ? "You’re all cleared!" : "You’re making progress.") : "Your clearance journey starts here."}</h2><p>{application ? "Complete the remaining requirements and track each review from your dashboard." : "Start one online application to submit and track all faculty clearance requirements."}</p>
         {application ? <div className="hero-progress"><ProgressBar value={progress} /><div><strong>{progress}%</strong><span>{application.approved} of {application.total} requirements approved</span></div></div>
-          : <button className="button button-primary" onClick={onStart} disabled={busy}><Plus size={16} />{busy ? "Preparing…" : "Start clearance application"}<ArrowRight size={15} /></button>}
+          : applicationsEnabled ? <button className="button button-primary" onClick={onStart} disabled={busy}><Plus size={16} />{busy ? "Preparing…" : "Start clearance application"}<ArrowRight size={15} /></button>
+            : <p className="muted-label">New clearance applications are currently closed by the faculty.</p>}
       </div><div className="hero-illustration"><div className="hero-ring ring-one" /><div className="hero-ring ring-two" /><div className="hero-doc"><FileCheck2 size={40} /><span><Check size={12} /></span></div><div className="hero-dot dot-one" /><div className="hero-dot dot-two" /></div></div>
       <div className="stats-grid">
         <StatCard label="Approved" value={counts.approved || 0} detail="Requirements complete" icon={CheckCircle2} tone="green" />
@@ -503,15 +561,15 @@ function EmptyState({ title, description }: { title: string; description: string
   return <div className="empty-state"><div><FileText size={18} /></div><strong>{title}</strong><span>{description}</span></div>;
 }
 
-function ClearancePage({ application, submissions, onStart, onUpload, onDownload, onPreview, onCertificate, busy }: {
+function ClearancePage({ application, submissions, onStart, onUpload, onDownload, onPreview, onCertificate, applicationsEnabled, busy }: {
   application: Application | null; submissions: Submission[]; onStart: () => void;
   onUpload: (event: ChangeEvent<HTMLInputElement>, item: Submission) => void; onDownload: (item: Submission) => void;
   onPreview: (item: Submission) => void;
-  onCertificate: (id: string) => void; busy: boolean;
+  onCertificate: (id: string) => void; applicationsEnabled: boolean; busy: boolean;
 }) {
   return <>
     <PageHeader eyebrow="STUDENT WORKSPACE" title="Clearance checklist" description="Submit documents and follow each requirement through review." action={application && application.status === "fully_cleared" ? <button className="button button-secondary" onClick={() => onCertificate(application.id)}><ShieldCheck size={16} />View certificate</button> : undefined} />
-    {!application ? <section className="card start-card"><span className="start-icon"><BookOpenCheck size={23} /></span><h2>Start your clearance application</h2><p>Your application will include each active requirement configured for your faculty and department.</p><button className="button button-primary" onClick={onStart} disabled={busy}><Plus size={16} />{busy ? "Preparing…" : "Start application"}</button></section>
+    {!application ? <section className="card start-card"><span className="start-icon"><BookOpenCheck size={23} /></span><h2>Start your clearance application</h2><p>Your application will include each active requirement configured for your faculty and department.</p>{applicationsEnabled ? <button className="button button-primary" onClick={onStart} disabled={busy}><Plus size={16} />{busy ? "Preparing…" : "Start application"}</button> : <p className="muted-label">New clearance applications are currently closed by the faculty.</p>}</section>
       : <>
         <section className="application-summary card"><div className="application-symbol"><ClipboardCheck size={22} /></div><div className="application-copy"><span>APPLICATION · {application.session} SESSION</span><strong>{application.full_name}</strong><small>{application.matric_no} · {application.department} · Level {application.level}</small></div><div className="application-progress"><strong>{application.progress}%</strong><small>{application.approved}/{application.total} approved</small><ProgressBar value={application.progress} /></div></section>
         <section className="card checklist-card"><div className="card-heading"><div><h2>Your requirements</h2><p>Upload a PDF or image for each requirement. Max 10 MB per document.</p></div><span className="requirement-count">{submissions.length} items</span></div>
@@ -563,18 +621,30 @@ function RequirementsPage({ items, draft, setDraft, editing, onSubmit, onEdit, o
   </>;
 }
 
-function StudentsPage({ students, applications, submissions, isAdmin, canCreateAdmins, onCreateStaff, busy }: {
+function StudentsPage({ students, applications, submissions, isAdmin, canCreateAdmins, settings, onSettings, onEditStudent, onSetStudentActive, onCreateStaff, busy }: {
   students: User[]; applications: Application[]; submissions: Submission[]; isAdmin: boolean; canCreateAdmins: boolean;
+  settings: AccessSettings; onSettings: (update: Partial<AccessSettings>) => void;
+  onEditStudent: (student: User) => void; onSetStudentActive: (student: User, active: boolean) => void;
   onCreateStaff: (event: FormEvent<HTMLFormElement>) => void; busy: boolean;
 }) {
+  const [query, setQuery] = useState("");
   const studentRows = students.filter(person => person.role === "student");
+  const visibleStudents = studentRows.filter(person =>
+    `${person.full_name} ${person.matric_no || ""} ${person.email} ${person.department}`.toLowerCase().includes(query.toLowerCase())
+  );
   const staffRows = students.filter(person => person.role !== "student");
   return <>
     <PageHeader eyebrow="FACULTY DIRECTORY" title="Student applications" description="Monitor registered students and their clearance progress." />
     <div className="stats-grid"><StatCard label="Registered students" value={studentRows.length} detail="Student accounts" icon={Users} tone="blue" /><StatCard label="Applications" value={applications.length} detail="Clearance applications" icon={FileText} tone="violet" /><StatCard label="Fully cleared" value={applications.filter(item => item.status === "fully_cleared").length} detail="All requirements approved" icon={CheckCircle2} tone="green" /><StatCard label="Open requirements" value={submissions.filter(item => item.status !== "approved").length} detail="Across current applications" icon={ClipboardCheck} tone="amber" /></div>
-    <div className="card table-card"><div className="card-heading"><div><h2>Student directory</h2><p>Student profile and current clearance progress.</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>STUDENT</th><th>PROGRAMME</th><th>DEPARTMENT</th><th>LEVEL</th><th>PROGRESS</th><th>STATUS</th></tr></thead><tbody>
-      {studentRows.map(person => { const application = applications.find(row => row.student_id === person.id); return <tr key={person.id}><td><strong>{person.full_name}</strong><small>{person.matric_no} · {person.email}</small></td><td>{person.programme}</td><td>{person.department}</td><td>{person.level}</td><td><div className="table-progress"><ProgressBar value={application?.progress || 0} /><small>{application?.progress || 0}%</small></div></td><td><StatusBadge status={application?.status || "outstanding"} /></td></tr>; })}
-      {!studentRows.length && <tr><td colSpan={6} className="table-blank">No student accounts yet.</td></tr>}
+    {isAdmin && <section className="card access-controls"><div className="card-heading"><div><h2>Student access controls</h2><p>Manage account creation and when students may start applications.</p></div></div>
+      <label className="toggle-row"><input type="checkbox" checked={settings.registration_enabled} disabled={busy} onChange={event => onSettings({ registration_enabled: event.target.checked })} /><span><strong>Allow new student registrations</strong><small>Existing students can still sign in when registration is closed.</small></span></label>
+      <label className="toggle-row"><input type="checkbox" checked={settings.applications_enabled} disabled={busy} onChange={event => onSettings({ applications_enabled: event.target.checked })} /><span><strong>Allow new clearance applications</strong><small>Does not stop students from continuing applications already started.</small></span></label>
+    </section>}
+    <div className="card table-card"><div className="card-heading"><div><h2>Student directory</h2><p>Student profile, account status, and clearance progress.</p></div></div>
+      <div className="table-toolbar"><label className="search-box"><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search name, matric number, email or department" /></label></div>
+      <div className="table-scroll"><table className="data-table"><thead><tr><th>STUDENT</th><th>PROGRAMME</th><th>DEPARTMENT</th><th>LEVEL</th><th>PROGRESS</th><th>APPLICATION</th><th>ACCOUNT</th>{isAdmin && <th>ACTIONS</th>}</tr></thead><tbody>
+      {visibleStudents.map(person => { const application = applications.find(row => row.student_id === person.id); const active = Boolean(person.active); return <tr key={person.id}><td><strong>{person.full_name}</strong><small>{person.matric_no} · {person.email}</small></td><td>{person.programme}</td><td>{person.department}</td><td>{person.level}</td><td><div className="table-progress"><ProgressBar value={application?.progress || 0} /><small>{application?.progress || 0}%</small></div></td><td><StatusBadge status={application?.status || "outstanding"} /></td><td><StatusBadge status={active ? "active" : "suspended"} /></td>{isAdmin && <td><div className="student-row-actions"><button className="button button-secondary" disabled={busy} onClick={() => onEditStudent(person)}><Settings2 size={13} />Edit</button><button className={`button ${active ? "button-danger" : "button-primary"}`} disabled={busy} onClick={() => onSetStudentActive(person, !active)}>{active ? "Suspend" : "Reactivate"}</button></div></td>}</tr>; })}
+      {!visibleStudents.length && <tr><td colSpan={isAdmin ? 8 : 7} className="table-blank">{studentRows.length ? "No students match your search." : "No student accounts yet."}</td></tr>}
     </tbody></table></div></div>
     {isAdmin && <div className="admin-layout staff-management">
       <form className="card requirement-form" onSubmit={onCreateStaff}><div className="card-heading"><div><h2>Add a staff member</h2><p>Create an officer account and assign its review scope.</p></div></div>
@@ -591,6 +661,31 @@ function StudentsPage({ students, applications, submissions, isAdmin, canCreateA
       </section>
     </div>}
   </>;
+}
+
+function StudentEditModal({ student, busy, onClose, onSave }: {
+  student: User; busy: boolean; onClose: () => void; onSave: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="review-modal student-edit-modal" role="dialog" aria-modal="true" aria-labelledby="student-edit-title">
+      <div className="modal-head"><div><span className="eyebrow">STUDENT ACCOUNT</span><h2 id="student-edit-title">Edit student profile</h2><p>{student.matric_no} · {student.email}</p></div><button className="icon-button" onClick={onClose} aria-label="Close student editor"><X size={19} /></button></div>
+      <form className="modal-body" onSubmit={onSave}>
+        <div className="form-grid">
+          <Field label="Full name"><input name="full_name" required minLength={2} defaultValue={student.full_name} /></Field>
+          <Field label="Matriculation number"><input name="matric_no" required minLength={3} defaultValue={student.matric_no || ""} /></Field>
+          <Field label="Email address"><input name="email" required type="email" defaultValue={student.email} /></Field>
+          <Field label="Phone number"><input name="phone" defaultValue={student.phone} /></Field>
+          <Field label="Faculty"><input name="faculty" required defaultValue={student.faculty} /></Field>
+          <Field label="Department"><input name="department" required defaultValue={student.department} /></Field>
+          <Field label="Programme"><input name="programme" required defaultValue={student.programme} /></Field>
+          <Field label="Current level"><input name="level" required defaultValue={student.level} /></Field>
+          <Field label="Admission year"><input name="admission_year" required maxLength={4} defaultValue={student.admission_year} /></Field>
+          <Field label="Expected graduation"><input name="graduation_year" required maxLength={4} defaultValue={student.graduation_year} /></Field>
+        </div>
+        <div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={busy}>{busy ? "Saving…" : "Save profile"}</button></div>
+      </form>
+    </section>
+  </div>;
 }
 
 function ReportsPage({ report, dashboard }: { report: { departments: { department: string; applications: number; fully_cleared: number }[] } | null; dashboard: Dashboard | null }) {

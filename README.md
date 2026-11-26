@@ -53,6 +53,8 @@ Without demo mode, students can register from the sign-in page. Set `CLEARANCE_B
 
 Uploaded documents are limited to PDF, PNG, and JPEG files (10 MB). The API validates file signatures, stores files under random names, and requires an authenticated, appropriately scoped user to retrieve them. Passwords are stored as scrypt hashes; bearer sessions expire after 12 hours.
 
+Faculty administrators and super administrators can manage students from the **Students** workspace: search accounts, edit student profile and academic details, suspend or reactivate access, and control new registrations and clearance applications. Suspending an account revokes its active sessions. Closing registrations prevents new student accounts; closing applications prevents new applications but leaves existing applications available to continue. Changes are recorded in the system activity log.
+
 ## Deploy to Railway and Vercel
 
 The API uses Railway PostgreSQL whenever `DATABASE_URL` is configured. `backend/Dockerfile` packages the API and its PostgreSQL driver for Railway.
